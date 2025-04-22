@@ -1,0 +1,10 @@
+[package]
+name = "dancing_links_x"
+version = "0.1.0"
+edition = "2024"
+default-run = "Sudoku"
+
+
+
+[dependencies]
+itertools = "0.14.0"

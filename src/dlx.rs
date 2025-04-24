@@ -1,8 +1,8 @@
-use itertools::{enumerate, Itertools};
+use itertools::*;
 use std::hint;
 
-// 10k runs with safe ~ 90us, without safety ~75 us.
-const UNSAFE_INDEXING: bool = true;
+// Quite significant speedup.
+const UNSAFE_INDEXING: bool    = true;
 const UNSAFE_ENUM_ACCESS: bool = true;
 
 
@@ -17,6 +17,22 @@ fn force_remove_all <T: Eq> (xs: &mut Vec<T>, rms: &Vec<T>)
                 };
                 xs.remove(pos);
         }
+}
+
+
+// Checks if a slice contains any contiguous duplicate elements.
+fn is_sorted_unique <X, F: Fn(&X, &X) -> bool> (xs: &[X], f: F) -> bool
+{
+        let mut last: Option<&X> = None;
+        for x in xs {
+                if let Some (last_x) = last {
+                        if f(last_x, x) {
+                                return false;
+                        }
+                }
+                last = Some (x);
+        }
+        true
 }
 
 // Todo it's probably easier to store indices to everything instead of pointers.
@@ -121,17 +137,23 @@ struct Node {
 impl Node {
         fn is_node (&self) -> bool
         {
+                matches!(self.spec_dat, EitherData::Node(_))
+                /*
                 match self.spec_dat {
                         EitherData::Node(_)     => true,
                         _                       => false,
                 }
+                */
         }
         fn is_header (&self) -> bool
         {
+                matches!(self.spec_dat, EitherData::Header(_))
+                /*
                 match self.spec_dat {
                         EitherData::Header(_)   => true,
                         _                       => false,
                 }
+                */
         }
 }
 
@@ -153,20 +175,6 @@ struct DancingLinkArray <'a, R: Eq> {
         removed_groups: Vec<(&'a R, Vec<usize>)>,
 }
 
-// Checks if a slice contains any contiguous duplicate elements.
-fn sorted_unique <X, F: Fn(&X, &X) -> bool> (xs: &[X], f: F) -> bool
-{
-        let mut last: Option<&X> = None;
-        for x in xs {
-                if let Some (last_x) = last {
-                        if f(last_x, x) {
-                                return false;
-                        }
-                }
-                last = Some (x);
-        }
-        true
-}
 
 impl <'a, R: Eq> DancingLinkArray <'a, R> {
 
@@ -327,27 +335,29 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
               FC: Fn(&I::Item) -> OC
         {
                 // We turn this mess of a factory into a vector of (&R) and (row_idx, col_idx).
-                let nodes: Box<[(&'a R, OR, OC)]> = it.map(|i| (iref(&i), i2r(&i), i2c(&i))).collect();
+                let node_trips: Box<[(&'a R, OR, OC)]> = it.map(|i| (iref(&i), i2r(&i), i2c(&i))).collect();
 
                 // We extract both the row and column data.
+                // We need to keep the 2 row data together because we're going to sort them
+                // together.
                 let sorted_unique_rows: Box<[(&'a R, &OR)]> = {
-                        let mut unique_rows: Box<[(&'a R, &OR)]> = nodes
+                        let mut rows: Box<[(&'a R, &OR)]> = node_trips
                                 .iter()
                                 .map(|(rf, r, _)| (*rf, r))
                                 .collect();
-                        unique_rows.sort_unstable_by(|(_, r1), (_, r2)| r1.cmp(r2));
-                        unique_rows
-                                .into_iter()
+                        rows.sort_unstable_by(|(_, r1), (_, r2)| r1.cmp(r2));
+
+                        rows.into_iter()
                                 .dedup_by(|(_, r1), (_, r2)| r1 == r2)
                                 .collect()
                 };
 
                 // Extracting just the references.
-                let sorted_row: Vec<&'a R> = sorted_unique_rows.iter().map(|(rf, _)| *rf).collect();
+                let sorted_row_refs: Vec<&'a R> = sorted_unique_rows.iter().map(|(rf, _)| *rf).collect();
 
                 // sorted unique columns
                 let sorted_unique_cols: Vec<& OC> = {
-                        let mut unique_cols: Vec<& OC> = nodes
+                        let mut unique_cols: Vec<& OC> = node_trips
                                 .iter()
                                 .map(|(_, _, c)| c)
                                 .collect();
@@ -363,18 +373,21 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 // To find indices, for each node we find for what row and column we have the index.
                 let mut idc: Vec<(usize, usize)> = Vec::new();
 
-                for (_, node_r, node_c) in &nodes {
-                        let opt_r = sorted_unique_rows.iter().zip(0usize..).find(|((_, r), _)| **r == *node_r);
-                        let opt_c = sorted_unique_cols.iter().zip(0usize..).find(|(c, _)| ***c == *node_c);
-                        if let (Some((_, r_idx)), Some((_, c_idx))) = (opt_r, opt_c) {
+                for (_, node_r, node_c) in &node_trips {
+
+                        let opt_r = sorted_unique_rows.iter().position(|(_, or)| **or == *node_r);
+                        let opt_c = sorted_unique_cols.iter().position(|c| **c == *node_c);
+
+                        if let (Some(r_idx), Some(c_idx)) = (opt_r, opt_c) {
                                 idc.push((r_idx, c_idx));
                         } else {
+                                // Should be unreachable.
                                 panic!("Node no column or row");
                         }
                 }
 
-                // Now we sort the indices
-                idc.sort_by(|(r1, c1), (r2, c2)| {
+                // Now we sort the indices row-major, as required by from_idx_array.
+                idc.sort_unstable_by(|(r1, c1), (r2, c2)| {
                         let rcmp = r1.cmp(r2);
                         if rcmp.is_eq() {
                                 c1.cmp(c2)
@@ -382,12 +395,12 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                                 rcmp
                         }
                 });
-                let unique = sorted_unique(idc.as_slice(), |l, r| l == r);
+                let unique = is_sorted_unique(idc.as_slice(), |l, r| l == r);
                 if !unique {
                         return None;
                 }
 
-                Self::from_idx_array(idc.as_slice(), num_cols, sorted_row.as_slice())
+                Self::from_idx_array(idc.as_slice(), num_cols, sorted_row_refs.as_slice())
         }
 
 
@@ -400,8 +413,8 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 let mut node_idc: Vec<(usize, usize)> = Vec::new();
                 let row_refs: Vec<&'a R> = rows.iter().collect();
 
-                for (row, r) in rows.iter().zip(0usize..) {
-                        for (col, c) in cols.iter().zip(0usize..) {
+                for (r, row) in rows.iter().enumerate() {
+                        for (c, col) in cols.iter().enumerate() {
                                 if p(row, col) {
                                         node_idc.push((r, c));
                                 }
@@ -410,13 +423,19 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 Self::from_idx_array(node_idc.as_slice(), cols.len(), row_refs.as_slice())
         }
 
+        // Returns wether the given header is removed from the structure.
         fn header_is_active (&self, h_idx: usize) -> bool
         {
                 self.active_headers.contains(&h_idx)
         }
 
-        // Some node-graph functions.
+        // Returns wether the given node is removed from the structure.
+        fn node_is_active (&self, n_idx: usize) -> bool
+        {
+                self.header_is_active(self.associated_header_index(n_idx))
+        }
 
+        // Some node-graph functions.
         fn detach_node_vertical (&mut self, n_idx: usize)
         {
                 let nodes = &mut self.nodes;
@@ -475,6 +494,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
+        // Returns index of the header of given node index.
         fn associated_header_index (&self, n_idx: usize) -> usize
         {
                 if UNSAFE_INDEXING {
@@ -486,6 +506,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
+        // Returns index in the row array of given node index.
         fn associated_row_index (&self, n_idx: usize) -> usize
         {
                 if UNSAFE_INDEXING {
@@ -508,7 +529,6 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
 
         }
-
         fn is_node_idx (&self, idx: usize) -> bool
         {
                 if UNSAFE_INDEXING {
@@ -520,6 +540,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
+        // Returns the index of the node/header to the bottom of the given node/header.
         fn to_bottom (&self, idx: usize) -> usize
         {
                 if UNSAFE_INDEXING {
@@ -531,6 +552,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
+        // Returns the index of the node/header to the right of the given node/header.
         fn to_right (&self, idx: usize) -> usize
         {
                 if UNSAFE_INDEXING {
@@ -542,17 +564,8 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
-        fn headers_colcount_mut (&mut self, h_idx: usize) -> &mut usize
-        {
-                if UNSAFE_INDEXING {
-                        unsafe {
-                        &mut self.nodes.get_unchecked_mut(h_idx).spec_dat.force_hdat_mut().n_col
-                        }
-                } else {
-                        &mut self.nodes[h_idx].spec_dat.force_hdat_mut().n_col
-                }
-        }
 
+        // Returns node count of given header.
         fn headers_colcount (&self, h_idx: usize) -> usize
         {
                 if UNSAFE_INDEXING {
@@ -564,15 +577,29 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 }
         }
 
+        // Returns &mut node count of given header.
+        fn headers_colcount_mut (&mut self, h_idx: usize) -> &mut usize
+        {
+                if UNSAFE_INDEXING {
+                        unsafe {
+                        &mut self.nodes.get_unchecked_mut(h_idx).spec_dat.force_hdat_mut().n_col
+                        }
+                } else {
+                        &mut self.nodes[h_idx].spec_dat.force_hdat_mut().n_col
+                }
+        }
+
+        // Returns the node count of the given node's header.
         fn nodes_header_count_mut (&mut self, n_idx: usize) -> &mut usize
         {
                 let h_idx = self.associated_header_index(n_idx);
                 self.headers_colcount_mut(h_idx)
         }
 
-        // Will remove the header from the structure
-        // and place it in the removed headers vector.
-        // we do NOT change the self.activeheader and self.removed_header fields.
+
+        // Will remove the header, its column and all rows of that column from the structure.
+        // we do NOT change the self.activeheader and self.removed_header fields,
+        // that's left to the calling function, because we want to group all associated header together.
         fn remove_header (&mut self, h_idx: usize)
         {
                 debug_assert!(self.nodes[h_idx].is_header());
@@ -591,6 +618,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                         return
                 }
 
+                // Iterate vertically
                 let mut v_nidx = entry_idx;
                 loop {
                         // For this node, we remove its row from their columns.
@@ -805,8 +833,10 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                         .collect()
         }
 
+
+
         // Will find an active node in each row, unless it doesn't exist.
-        fn get_node_per_row (&self) -> Box<[Option<usize>]>
+        fn get_active_node_per_row (&self) -> Box<[Option<usize>]>
         {
                 let num_rows = self.rows.len();
 
@@ -836,6 +866,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                 found_indices
         }
 
+
         // Makes choices given row indices.
         pub fn make_choices <I: Iterator<Item=usize>> (&mut self, rows: I)
         {
@@ -844,7 +875,7 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
 
                 let num_rows = self.rows.len();
                 let mut visited: Box<[bool]> = std::iter::repeat_n(false, num_rows).collect();
-                let row_nodes = self.get_node_per_row();
+                let row_nodes = self.get_active_node_per_row();
 
                 for r_idx in rows {
                         if r_idx >= num_rows {
@@ -867,6 +898,56 @@ impl <'a, R: Eq> DancingLinkArray <'a, R> {
                         self.remove_row(rm_idx);
                 }
         }
+
+        // Makes choices given row indices.
+        // We don't check these indices,
+        // Counts the number of choices.
+        fn make_choices_index_count_unsafe <I: IntoIterator<Item=usize>> (&mut self, rows: I) -> usize
+        {
+                let row_nodes = self.get_active_node_per_row();
+                let mut rm_count: usize = 0;
+                for row in rows {
+                        let repr_idx = row_nodes[row].expect("Invalid row index given");
+                        self.remove_row(repr_idx);
+                        rm_count += 1;
+                }
+
+                rm_count
+
+                // First we find representing nodes.
+
+                /*
+                // First we find representing nodes.
+                let mut rm_idc: Vec<usize> = Vec::new();
+
+                let num_rows = self.rows.len();
+                let mut visited: Box<[bool]> = std::iter::repeat_n(false, num_rows).collect();
+
+                let row_nodes = self.get_node_per_row();
+
+                for r_idx in rows {
+                        if r_idx >= num_rows {
+                                panic!("Row index out of bounds!");
+                        }
+                        if visited[r_idx] {
+                                panic!("Row already removed!");
+                        }
+                        visited[r_idx] = true;
+
+                        let Some(repr_idx) = row_nodes[r_idx] else {
+                                panic!("This row has no nodes to remove!");
+                        };
+
+                        rm_idc.push(repr_idx);
+                }
+
+                // Each row now has a unique representing node.
+                for rm_idx in rm_idc {
+                        self.remove_row(rm_idx);
+                }
+                */
+        }
+
 
         // Version where the user gives gives references.
         // We find which rows correspond to the references.

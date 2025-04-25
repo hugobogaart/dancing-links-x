@@ -92,7 +92,7 @@ impl <R: Clone + Eq> UCSolver <R> {
         pub
         fn solve_many (&mut self) -> Vec<Vec<R>>
         {
-                let sols = self.array.solve_one();
+                let sols = self.array.solve_many();
                 sols.into_iter().map(|sol| {
                         sol.into_iter().map(|idx| self.row_dat[idx as usize].clone()).collect()
                 }).collect()

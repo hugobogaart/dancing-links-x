@@ -3,6 +3,10 @@ const UNSAFE_INDEXING: bool = true;
 pub
 type NodeIdx = u32;
 
+// Not Headers will have non-valid indices.
+//  We just use this constant to represent that.
+const INVALID_NODE_IDX: NodeIdx = NodeIdx::MAX;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Node {
         u:      NodeIdx,
@@ -366,11 +370,11 @@ impl DancingLinkArray {
                 fn gen_header (col: usize) -> Node
                 {
                         Node {
-                                u: 0,
-                                d: 0,
-                                l: 0,
-                                r: 0,
-                                row: 0, // Meaningless.
+                                u: INVALID_NODE_IDX,    // yet to be filled.
+                                d: INVALID_NODE_IDX,
+                                l: INVALID_NODE_IDX,
+                                r: INVALID_NODE_IDX,
+                                row: INVALID_NODE_IDX, // Meaningless. We don't use that
                                 col: col as NodeIdx,
                         }
                 }
@@ -378,10 +382,10 @@ impl DancingLinkArray {
                 fn gen_node ((row, col): (usize, usize)) -> Node
                 {
                         Node {
-                                u: 0,
-                                d: 0,
-                                l: 0,
-                                r: 0,
+                                u: INVALID_NODE_IDX,
+                                d: INVALID_NODE_IDX,
+                                l: INVALID_NODE_IDX,
+                                r: INVALID_NODE_IDX,
                                 row: row as NodeIdx,
                                 col: col as NodeIdx,
                         }

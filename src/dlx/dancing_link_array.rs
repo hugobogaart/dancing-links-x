@@ -1,7 +1,3 @@
-use std::cmp::Ordering;
-
-use itertools::Itertools;
-
 const UNSAFE_INDEXING: bool = true;
 
 pub
@@ -26,17 +22,12 @@ struct DancingLinkArray {
 
         // Size for each column.
         sizes: Box<[u64]>,
-
-        // header_idc: Vec<NodeIdx>,
-
-        // saves one node per row.
-        // row_idc: Box<[NodeIdx]>,
 }
 
 impl DancingLinkArray {
 
         // Some utilities.
-        fn get_it_over_node_idc (&self) -> impl Iterator<Item = NodeIdx>
+        fn it_over_node_idc (&self) -> impl Iterator<Item = NodeIdx>
         {
                 let n_h = self.num_headers()    as NodeIdx;
                 let n_all = self.nodes.len()    as NodeIdx;
@@ -186,16 +177,6 @@ impl DancingLinkArray {
                 (idx as usize) < self.num_headers()
         }
 
-        fn get_size_col (&self, col: NodeIdx) -> u64
-        {
-                if UNSAFE_INDEXING {
-                        unsafe {
-                        *self.sizes.get_unchecked(col as usize)
-                        }
-                } else {
-                        self.sizes[col as usize]
-                }
-        }
         fn get_size_node (&self, idx: NodeIdx) -> u64
         {
                 let col = self.get_col(idx);
@@ -273,6 +254,8 @@ impl DancingLinkArray {
                 }
         }
 
+        // public, since the DLXsolver may want to manually insert rows.
+        // Rows must be inserted in precisely the opposite order of removal.
         pub
         fn insert_row (&mut self, n_idx: NodeIdx)
         {
@@ -291,6 +274,7 @@ impl DancingLinkArray {
                 }
         }
 
+        // Finds header (not root) with the lowest size.
         fn lowest_header (&self) -> Option <NodeIdx>
         {
                 let mut h_idx = self.to_right(self.root());
@@ -311,27 +295,6 @@ impl DancingLinkArray {
                 }
                 Some(lowest_idx)
         }
-
-
-        /*
-        fn with_highest_header (&self, n_idx: NodeIdx) -> NodeIdx
-        {
-                let col = self.get_col(n_idx);
-                let mut current_best_sz = self.get_size(col);
-                let mut current_best_idx = n_idx;
-                let mut h_idx = self.to_right(n_idx);
-                while h_idx != n_idx {
-                        let h_col = self.get_col(h_idx);
-                        let h_sz = self.get_size(h_col);
-                        if h_sz > current_best_sz {
-                                current_best_sz = h_sz;
-                                current_best_idx = h_idx;
-                        }
-                        h_idx = self.to_right(h_idx);
-                }
-                current_best_idx
-        }
-        */
 
         pub
         fn solve_one (&mut self) -> Option <Vec<NodeIdx>>
@@ -396,7 +359,7 @@ impl DancingLinkArray {
 
         // Assumes the elements are sorted row-major and unique.
         pub
-        fn construct_from_sorted_unsafe <I> (elems_gen: I, num_rows: usize, num_cols: usize) -> DancingLinkArray
+        fn from_sorted_idc_unsafe <I> (elems_gen: I, num_rows: usize, num_cols: usize) -> DancingLinkArray
         where
                 I: IntoIterator<Item = (usize, usize)>
         {
@@ -512,56 +475,22 @@ impl DancingLinkArray {
                 DancingLinkArray {nodes, sizes}
         }
 
-        pub
-        fn construct_from_idc <I: IntoIterator<Item = (usize, usize)>> (elems: I) -> Option<DancingLinkArray>
-        {
-                let mut idc_arr: Box<[(usize, usize)]> = elems.into_iter().collect();
-
-                // We sort this array row major.
-                fn ord ((r1, c1): &(usize, usize), (r2, c2): &(usize, usize)) -> Ordering
-                {
-                        let r_comp = r1.cmp(r2);
-                        if r_comp.is_eq() {
-                                r_comp
-                        } else {
-                                c1.cmp(c2)
-                        }
-                }
-                idc_arr.sort_unstable_by(ord);
-                // Now we test for equality between elements.
-                // If so, we return nothing.
-
-                let opt_maxrow_col = idc_arr.iter().cloned()
-                        .reduce(|(r1, c1), (r2, c2)|
-                                (std::cmp::max(r1, r2), std::cmp::max(c1, c2)));
-
-                let (num_rows, num_cols) = opt_maxrow_col
-                    .map(|(m_r, m_c)| (m_r + 1, m_c + 1))
-                        .unwrap_or((0, 0));
-
-                if idc_arr.iter().all_unique() {
-                        let dla = Self::construct_from_sorted_unsafe(idc_arr.into_iter(), num_rows, num_cols);
-                        Some (dla)
-                } else {
-                        None
-                }
-        }
-
         // Fills in array such that array[r] is a NodeIndex to a node in row r.
         pub
-        fn to_each_row (&self, output: &mut Vec<NodeIdx>)
+        fn to_each_row (&self) -> Box<[NodeIdx]>
         {
                 // By construction, Each row should have at least one node.
-                assert!(output.is_empty());
                 let n_rows = self.num_rows();
-                output.reserve(n_rows);
+                let mut output: Vec<NodeIdx> = Vec::with_capacity(n_rows);
+
                 let mut next_row = 0;
-                for idx in self.get_it_over_node_idc() {
+                for idx in self.it_over_node_idc() {
                         if self.get_row(idx) == next_row {
                                 output.push(idx);
                                 next_row += 1;
                         }
                 }
                 debug_assert_eq!(output.len(), n_rows);
+                output.into_boxed_slice()
         }
 }

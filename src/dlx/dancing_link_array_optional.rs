@@ -31,6 +31,7 @@ struct DancingLinkArray {
         num_headers: usize,
 
         // One past the end of stict headers, even if there are no optional columns.
+        // We save this because we need to know if a header is strict or optional.
         first_optional_h_idx: NodeIdx,
 
         // Size for each column. Not really needed for optional columns,
@@ -189,8 +190,8 @@ impl DancingLinkArray {
                 (idx as usize) < self.num_headers
         }
 
-        // We count the root header.
-        fn header_in_hor_struc (&self, h_idx: NodeIdx) -> bool
+        // We count the root header as being strict.
+        fn header_is_hor_structure (&self, h_idx: NodeIdx) -> bool
         {
                 h_idx < self.first_optional_h_idx
         }
@@ -225,7 +226,7 @@ impl DancingLinkArray {
 
                 // Optional headers are not part of the structure,
                 // So removing them would not be needed.
-                if self.header_in_hor_struc(c) {
+                if self.header_is_hor_structure(c) {
                         self.rm_node_hor(c);
                 }
 
@@ -259,7 +260,7 @@ impl DancingLinkArray {
                         v_idx = self.to_bottom(v_idx);
                 }
 
-                if self.header_in_hor_struc(c) {
+                if self.header_is_hor_structure(c) {
                         self.insert_node_hor(c);
                 }
         }
@@ -302,6 +303,7 @@ impl DancingLinkArray {
         }
 
         // Finds strict header with the lowest column size.
+        // If there is only root, finds nothing.
         fn lowest_strict_header (&self) -> Option <NodeIdx>
         {
                 let mut h_idx = self.to_right(self.root());
@@ -309,6 +311,7 @@ impl DancingLinkArray {
                         return None;
                 }
 
+                // We save the current "best" index and its count.
                 let mut lowest_idx   = h_idx;
                 let mut lowest_count = self.get_size_node(h_idx);
                 h_idx = self.to_right(h_idx);
@@ -326,6 +329,8 @@ impl DancingLinkArray {
                 Some(lowest_idx)
         }
 
+        // Returns the first solution found.
+        // A solutions is a vector of row indices.
         pub
         fn solve_one (&mut self) -> Option <Vec<NodeIdx>>
         {
@@ -352,6 +357,8 @@ impl DancingLinkArray {
                 None
         }
 
+        // Returns all solutions.
+        // Each solution is a vector of row indices.
         pub
         fn solve_many (&mut self) -> Vec <Vec<NodeIdx>>
         {
@@ -387,7 +394,10 @@ impl DancingLinkArray {
                 sols
         }
 
+        // The only constructor of the array.
+        // Meant to be used by the "dlx" module.
         // Assumes the elements are sorted row-major and unique.
+        // elems_gen must generate (row, col) pairs.
         pub
         fn from_sorted_idc_unsafe <I> (elems_gen: I, num_rows: usize, num_strict_cols: usize, num_opt_cols: usize) -> DancingLinkArray
         where
@@ -420,28 +430,31 @@ impl DancingLinkArray {
                 let num_cols = num_strict_cols + num_opt_cols;
                 let num_headers = num_cols + 1; // one for each column, plus root.
 
-                // We assume elems is sorted.
+                // By assumption, elems is sorted.
                 let gen_root    = std::iter::once(gen_header(0));
                 let gen_headers = (0..num_cols).map(gen_header);
                 let gen_nodes   = elems_gen.into_iter().map (gen_node);
 
                 let mut nodes: Box<[Node]> = gen_root.chain(gen_headers).chain(gen_nodes).collect();
 
-                // Index of first optional header
-                let first_optional_h_idx = 1 + num_strict_cols as NodeIdx;
+                // Offset by 1, because the first header is the root.
                 let last_strict_h_idx = num_strict_cols as NodeIdx;
 
-                // For the nodes, the row, col fields are accurate.
-                //  We do still have to fill in the neighbour idc.
+                // Index of first optional header.
+                // If there are, no optional headers, this value is meaningless.
+                let first_optional_h_idx = last_strict_h_idx + 1;
 
-                // The first num_strict_cols + 1 entries are strict headers.
-                // We ignore the optional.
+                // Now, we fill in the neighbour indices.
+
+                // The first num_strict_cols + 1 entries are strict headers, including root.
+                // We do *not* put the optional headers in the structure.
                 for c in 0..=last_strict_h_idx {
                         let l_idx = c;
                         let r_idx = l_idx + 1;
                         nodes[l_idx as usize].r = r_idx as NodeIdx;
                         nodes[r_idx as usize].l = l_idx as NodeIdx;
                 }
+                // And root links to the last strict header.
                 nodes[0].l = last_strict_h_idx as NodeIdx;
                 nodes[last_strict_h_idx as usize].r = 0;
 
@@ -460,6 +473,11 @@ impl DancingLinkArray {
                                 panic!("Empty row given");
                         };
 
+                        // we use the state of idx_it.
+
+                        // And for each next node in the row, we set it's left
+                        // neighbour to the last node we found,
+                        // and that node's right neighbour to this one.
                         let mut last_idx = first_idx;
                         for next_idx in idx_it {
                                 if nodes[next_idx].row != r {
@@ -503,17 +521,19 @@ impl DancingLinkArray {
                         nodes[h_idx].u = last_idx as NodeIdx;
                 }
 
+                // And finally, we fill in the number of nodes in each column.
                 let mut sizes: Box<[u64]> = std::iter::repeat_n(0, num_cols).collect();
                 for i in normal_node_it() {
                         let col = nodes[i].col;
                         sizes[col as usize] += 1;
                 }
 
-                // root is largely inititialized, but that's ok.
                 DancingLinkArray {nodes, sizes, first_optional_h_idx, num_headers}
         }
 
-        // Fills in array such that array[r] is a NodeIndex to a node in row r.
+        // Returns an index to a node in each row,
+        // such that array[r] is a NodeIndex to a node in row r.
+        // The returned array will remain valid, even after "removing a row".
         pub
         fn to_each_row (&self) -> Box<[NodeIdx]>
         {

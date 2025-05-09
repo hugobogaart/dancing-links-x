@@ -1,4 +1,3 @@
-mod dancing_link_array;
 mod dancing_link_array_optional;
 
 use dancing_link_array_optional as dla;
@@ -11,21 +10,25 @@ pub
 struct UCSolver <R: Clone + Eq> {
         array: dla::DancingLinkArray,
 
-        // row_dat: &'a [R],
         row_dat: Box<[R]>,
 
         // Keeps track of the state we put the array in since construction.
+        // When removing a row from the DLA, we store a handle to it here,
+        // and when restoring, we pop it.
         rm_rows: Vec<usize>,
 
-        // We remember a node for each row.
+        // We remember a single node for each row, for performance.
+        // This is constructed at construction and does not change.
         to_rows: Box<[dla::NodeIdx]>
 }
 
 
-// Todo: implement more constructors.
 impl <R: Clone + Eq> UCSolver <R> {
 
         // The constructors:
+
+        // Constructs a UCSolver by taking the rows, columns and
+        // constructs a node there or not, depending on the given predicate.
         pub
         fn from_pred <C, P: Fn(&R, &C) -> bool> (rows: &[R], cols: &[C], p: P) -> UCSolver < R>
         {
@@ -42,6 +45,7 @@ impl <R: Clone + Eq> UCSolver <R> {
                 UCSolver {array: dla, row_dat, rm_rows: Vec::new(), to_rows}
         }
 
+        // Like from_pred, but distinguishes strict and optional columns.
         pub
         fn from_pred_opt <C, P: Fn(&R, &C) -> bool> (rows: &[R], strict_cols: &[C], opt_cols: &[C], p: P) -> UCSolver < R>
         {
@@ -64,7 +68,10 @@ impl <R: Clone + Eq> UCSolver <R> {
         }
 
         // O(n^2).
-        // Yeah, this could be faster for large n.
+        // Yeah, this could be faster for large n,
+        // but it probably doesn't matter.
+        //
+        // Constructs a UCSolver by taking all the nodes.
         pub
         fn from_it <C: Eq, I: IntoIterator<Item = (R, C)>> (it: I) -> Option<UCSolver <R>>
         {
@@ -106,12 +113,15 @@ impl <R: Clone + Eq> UCSolver <R> {
                 Some (UCSolver {array: dla, row_dat: unique_rows.into_boxed_slice(), rm_rows, to_rows})
         }
 
+        // Returns a solution, if exists.
         pub
         fn solve_one (&mut self) -> Option<Vec<R>>
         {
                 let idc = self.array.solve_one()?;
                 Some (idc.into_iter().map(|idx| self.row_dat[idx as usize].clone()).collect())
         }
+
+        // Returns all solutions.
         pub
         fn solve_many (&mut self) -> Vec<Vec<R>>
         {
@@ -121,22 +131,31 @@ impl <R: Clone + Eq> UCSolver <R> {
                 }).collect()
         }
 
-        // Applies one change to the board with checking.
-        // For internal use.
+        // Applies one change to the board.
+        // Also sets internal state.
         fn set_state1 (&mut self, r: &R)
         {
+                // First we find the row-index corresponding to this particular given row.
                 let opt_r_idx = self.row_dat.iter().position(|row| row == r);
+
+                // Obviously, this row has to exist.
                 let Some(r_idx) = opt_r_idx else {
                         panic! ("Tried to remove a non-existant row!");
                 };
+
+                // And this row has to be currently not removed.
                 if self.rm_rows.contains(&r_idx) {
                         panic!("Tried to remove an already removed row!");
                 }
-                let node_entry: dla::NodeIdx = self.to_rows[r_idx];
 
+                // We find some node in the dla that has this row, and remove it.
+                // We also remember we removed this row.
+
+                let node_entry: dla::NodeIdx = self.to_rows[r_idx];
                 self.array.rm_row(node_entry);
                 self.rm_rows.push(r_idx);
         }
+
 
         pub
         fn set_state <'b, I: IntoIterator<Item = &'b R>>(&mut self, r_it: I)
@@ -147,18 +166,18 @@ impl <R: Clone + Eq> UCSolver <R> {
                 }
         }
 
+        // Recovers n changes, previously made with set_state.
         pub
         fn recover_n (&mut self, n: usize)
         {
                 for _ in 0..n {
-                        let r_idx = self.rm_rows.pop().expect("Tried to recover further than initial state!");
+                        let r_idx = self.rm_rows.pop().expect("Tried to recover nonexistent change!");
                         let entry_node = self.to_rows[r_idx];
                         self.array.insert_row(entry_node);
                 }
         }
 
-
-
+        // Wrapper around set_state >> solve_one >> recover_n.
         pub
         fn solve_one_with <'b, I: IntoIterator<Item = &'b R>> (&mut self, r_it: I) -> Option<Vec<R>>
         where R: 'b
@@ -172,6 +191,8 @@ impl <R: Clone + Eq> UCSolver <R> {
                 self.recover_n(cnt);
                 sol
         }
+
+        // Wrapper around set_state >> solve_many >> recover_n.
         pub
         fn solve_many_with <'b, I: IntoIterator<Item = &'b R>> (&mut self, r_it: I) -> Vec<Vec<R>>
         where R: 'b
@@ -187,6 +208,7 @@ impl <R: Clone + Eq> UCSolver <R> {
         }
 }
 
+// sorts (row, col) inplace, row major.
 fn sort_idc_rowmaj (idc: &mut [(usize, usize)])
 {
         fn ord ((r1, c1): &(usize, usize), (r2, c2): &(usize, usize)) -> Ordering
@@ -201,6 +223,7 @@ fn sort_idc_rowmaj (idc: &mut [(usize, usize)])
         idc.sort_unstable_by(ord);
 }
 
+// Takes sorted elements, and returns wether all elements are unique.
 fn sorted_idc_unique (idc: &[(usize, usize)]) -> bool
 {
         let mut it = idc.iter();

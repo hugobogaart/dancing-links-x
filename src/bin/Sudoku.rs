@@ -358,6 +358,8 @@ struct FileSolveJob {
 
 enum Job {
         SolveFile (FileSolveJob),
+
+        // Solve board given by this string.
         SolveArg (String),
 }
 
@@ -425,6 +427,12 @@ fn parse_args () -> Result<CLArguments, String>
                 let job = Job::SolveFile(fs_job);
                 Ok(CLArguments { job, time: t })
         } else {
+
+                // The first argument must be the board string.
+                if tok_args.is_empty() {
+                        return Err(String::from("Expected a board as the first parameter!"));
+                }
+
                 if i {
                         return Err(String::from("Can't use -i without -f!"));
                 }
@@ -472,6 +480,7 @@ fn solve_board (b_str: String ,time_it: bool)
 
 fn solve_file (fjob: FileSolveJob ,time_it: bool)
 {
+        // We attempt to open the sudokus.
         let sudokus;
         match open_sudokus(fjob.path_to_file, fjob.ignore_first) {
                 Ok(s) => sudokus = s,
@@ -484,9 +493,12 @@ fn solve_file (fjob: FileSolveJob ,time_it: bool)
         let rows: &[Choice] = EMPTY_POSSIBLE_CHOICES.as_ref();
         let cols: &[Constraint] = EMPTY_CONSTRAINTS.as_ref();
         let mut solver = dlx::UCSolver::from_pred(rows, cols, choice_satisies_constraint);
-        let all_made_choices: Vec<Vec<Choice>> = sudokus.iter().map(all_current_choices).collect();
         let mut sols: Vec<SudokuBoard> = Vec::with_capacity(sudokus.len());
+
+        // For each sudoku that we want to solve, we compute its representation
+        // as choices that have already been made.
         let all_made_choices: Vec<Vec<Choice>> = sudokus.iter().map(all_current_choices).collect();
+        let num_sudokus = all_made_choices.len();
 
         let t_start =  std::time::Instant::now();
 
@@ -504,7 +516,8 @@ fn solve_file (fjob: FileSolveJob ,time_it: bool)
         write_sudokus(sudokus.as_ref(), sols.as_slice(), fjob.path_to_sols);
         if time_it {
                 let s = dur.as_secs_f64();
-                println!("That took {} ms", s * 1000.0);
+                let us_per_sudoku = s * 1000.0 * 1000.0 / f64::from(num_sudokus as u32);
+                println!("That took {} ms, which is {us_per_sudoku} us per sudoky", s * 1000.0);
         }
 }
 

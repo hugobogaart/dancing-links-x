@@ -191,7 +191,7 @@ impl DancingLinkArray {
         }
 
         // We count the root header as being strict.
-        fn header_is_hor_structure (&self, h_idx: NodeIdx) -> bool
+        fn header_in_hor_structure (&self, h_idx: NodeIdx) -> bool
         {
                 h_idx < self.first_optional_h_idx
         }
@@ -226,7 +226,7 @@ impl DancingLinkArray {
 
                 // Optional headers are not part of the structure,
                 // So removing them would not be needed.
-                if self.header_is_hor_structure(c) {
+                if self.header_in_hor_structure(c) {
                         self.rm_node_hor(c);
                 }
 
@@ -260,7 +260,7 @@ impl DancingLinkArray {
                         v_idx = self.to_bottom(v_idx);
                 }
 
-                if self.header_is_hor_structure(c) {
+                if self.header_in_hor_structure(c) {
                         self.insert_node_hor(c);
                 }
         }

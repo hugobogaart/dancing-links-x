@@ -2,13 +2,14 @@
 name = "dancing_links_x"
 version = "0.1.0"
 edition = "2024"
-default-run = "Sudoku"
+# default-run = "Sudoku"
+default-run = "NQueens"
 
 [profile.release]
 lto = "thin"
 overflow-checks = false
 opt-level = 3
-strip = "symbols"
+strip = "none"
 debug-assertions = false
 
 

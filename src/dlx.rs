@@ -1,5 +1,7 @@
 mod dancing_link_array;
-use dancing_link_array as dla;
+mod dancing_link_array_optional;
+
+use dancing_link_array_optional as dla;
 use itertools::Itertools;
 use std::cmp::Ordering;
 
@@ -34,7 +36,28 @@ impl <R: Clone + Eq> UCSolver <R> {
                         .filter (|((_, r), (_, c))| p(r, c))
                         .map (|((r_idx, _), (c_idx, _))| (r_idx, c_idx));
 
-                let dla = dla::DancingLinkArray::from_sorted_idc_unsafe(idc_gen, rows.len(), cols.len());
+                let dla = dla::DancingLinkArray::from_sorted_idc_unsafe(idc_gen, rows.len(), cols.len(), 0);
+                let to_rows = dla.to_each_row();
+
+                UCSolver {array: dla, row_dat, rm_rows: Vec::new(), to_rows}
+        }
+
+        pub
+        fn from_pred_opt <C, P: Fn(&R, &C) -> bool> (rows: &[R], strict_cols: &[C], opt_cols: &[C], p: P) -> UCSolver < R>
+        {
+                let row_dat: Box<[R]> = rows.iter().cloned().collect();
+
+                let cols_it = strict_cols.iter().chain(opt_cols.iter());
+
+                let idc_gen = rows.iter().enumerate()
+                                .cartesian_product(cols_it.enumerate())
+                        .filter (|((_, r), (_, c))| p(r, c))
+                        .map (|((r_idx, _), (c_idx, _))| (r_idx, c_idx));
+
+                let num_strict_cols = strict_cols.len();
+                let num_opt_cols = opt_cols.len();
+                let dla = dla::DancingLinkArray::from_sorted_idc_unsafe(idc_gen, rows.len(), num_strict_cols, num_opt_cols);
+
                 let to_rows = dla.to_each_row();
 
                 UCSolver {array: dla, row_dat, rm_rows: Vec::new(), to_rows}
@@ -77,7 +100,7 @@ impl <R: Clone + Eq> UCSolver <R> {
 
                 let num_rows = unique_rows.len();
                 let num_cols = unique_cols.len();
-                let dla = dancing_link_array::DancingLinkArray::from_sorted_idc_unsafe(idc, num_rows, num_cols);
+                let dla = dla::DancingLinkArray::from_sorted_idc_unsafe(idc, num_rows, num_cols, 0);
                 let to_rows = dla.to_each_row();
                 let rm_rows = Vec::new();
                 Some (UCSolver {array: dla, row_dat: unique_rows.into_boxed_slice(), rm_rows, to_rows})
